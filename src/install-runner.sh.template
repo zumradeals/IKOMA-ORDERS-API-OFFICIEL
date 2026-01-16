@@ -1,0 +1,175 @@
+#!/bin/bash
+# Ikoma Runner Installation Script
+# This script installs and configures the Ikoma Runner as a systemd service.
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Default values
+API_URL=""
+RUNNER_ID=""
+TOKEN=""
+HEARTBEAT_INTERVAL=30
+POLL_INTERVAL=10
+INSTALL_DIR="/opt/ikoma-runner"
+
+usage() {
+    echo "Usage: $0 --api-url <URL> --runner-id <ID> --token <TOKEN> [options]"
+    echo ""
+    echo "Options:"
+    echo "  --api-url <URL>           Base URL of the Ikoma API (e.g., https://automate.ikomadigit.com)"
+    echo "  --runner-id <ID>          UUID of the runner"
+    echo "  --token <TOKEN>           Secret token for the runner"
+    echo "  --heartbeat-interval <S>  Heartbeat interval in seconds (default: 30)"
+    echo "  --poll-interval <S>       Order polling interval in seconds (default: 10)"
+    exit 1
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --api-url) API_URL="$2"; shift 2 ;;
+        --runner-id) RUNNER_ID="$2"; shift 2 ;;
+        --token) TOKEN="$2"; shift 2 ;;
+        --heartbeat-interval) HEARTBEAT_INTERVAL="$2"; shift 2 ;;
+        --poll-interval) POLL_INTERVAL="$2"; shift 2 ;;
+        *) usage ;;
+    esac
+done
+
+if [[ -z "$API_URL" || -z "$RUNNER_ID" || -z "$TOKEN" ]]; then
+    usage
+fi
+
+echo -e "${YELLOW}Starting Ikoma Runner installation...${NC}"
+
+# 1. Pre-checks
+echo -e "Checking API connectivity..."
+if ! curl -fsS "${API_URL}/health" > /dev/null; then
+    echo -e "${RED}Error: Cannot reach API at ${API_URL}/health${NC}"
+    exit 1
+fi
+
+echo -e "Verifying runner credentials..."
+HB_RESPONSE=$(curl -s -X POST "${API_URL}/v1/runner/heartbeat" \
+    -H "x-runner-id: ${RUNNER_ID}" \
+    -H "x-runner-token: ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"status": "ONLINE"}')
+
+if [[ "$HB_RESPONSE" != *"\"ok\":true"* ]]; then
+    echo -e "${RED}Error: Runner authentication failed or runner is disabled.${NC}"
+    echo "Response: $HB_RESPONSE"
+    exit 1
+fi
+echo -e "${GREEN}Authentication successful!${NC}"
+
+# 2. Create directory structure
+echo -e "Creating installation directory at ${INSTALL_DIR}..."
+sudo mkdir -p "${INSTALL_DIR}"
+sudo chown $USER:$USER "${INSTALL_DIR}"
+
+# 3. Create configuration file
+echo -e "Creating configuration..."
+cat <<EOF > "${INSTALL_DIR}/config.env"
+API_URL=${API_URL}
+RUNNER_ID=${RUNNER_ID}
+RUNNER_TOKEN=${TOKEN}
+HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL}
+POLL_INTERVAL=${POLL_INTERVAL}
+EOF
+chmod 600 "${INSTALL_DIR}/config.env"
+
+# 4. Create runner script
+echo -e "Creating runner script..."
+cat <<'EOF' > "${INSTALL_DIR}/runner.sh"
+#!/bin/bash
+# Ikoma Runner Execution Script
+source /opt/ikoma-runner/config.env
+
+echo "Ikoma Runner started (ID: $RUNNER_ID)"
+
+last_hb=0
+
+while true; do
+    now=$(date +%s)
+    
+    # 1. Heartbeat
+    if (( now - last_hb >= HEARTBEAT_INTERVAL )); then
+        curl -s -X POST "${API_URL}/v1/runner/heartbeat" \
+            -H "x-runner-id: ${RUNNER_ID}" \
+            -H "x-runner-token: ${RUNNER_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"status": "ONLINE"}' > /dev/null
+        last_hb=$now
+    fi
+
+    # 2. Poll for orders
+    ORDER=$(curl -s -X POST "${API_URL}/v1/runner/orders/claim-next" \
+        -H "x-runner-id: ${RUNNER_ID}" \
+        -H "x-runner-token: ${RUNNER_TOKEN}")
+
+    if [[ -n "$ORDER" && "$ORDER" != "null" ]]; then
+        ORDER_ID=$(echo "$ORDER" | grep -oP '"id":"\K[^"]+')
+        echo "Claimed order: $ORDER_ID"
+        
+        # Start order
+        curl -s -X POST "${API_URL}/v1/runner/orders/${ORDER_ID}/start" \
+            -H "x-runner-id: ${RUNNER_ID}" \
+            -H "x-runner-token: ${RUNNER_TOKEN}" > /dev/null
+            
+        # Execute (Placeholder for actual execution logic)
+        echo "Executing order $ORDER_ID..."
+        sleep 2
+        
+        # Complete order
+        # Note: In a real scenario, the runner would send a full report.
+        # This is a minimal success report.
+        REPORT='{"report":{"version":"v1","ok":true,"summary":"Completed by bash runner","startedAt":"'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'","finishedAt":"'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'","steps":[],"artifacts":{},"errors":[]}}'
+        
+        curl -s -X POST "${API_URL}/v1/runner/orders/${ORDER_ID}/complete" \
+            -H "x-runner-id: ${RUNNER_ID}" \
+            -H "x-runner-token: ${RUNNER_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$REPORT" > /dev/null
+            
+        echo "Order $ORDER_ID completed."
+    fi
+
+    sleep $POLL_INTERVAL
+done
+EOF
+chmod +x "${INSTALL_DIR}/runner.sh"
+
+# 5. Create systemd service
+echo -e "Creating systemd service..."
+sudo bash -c "cat <<EOF > /etc/systemd/system/ikoma-runner.service
+[Unit]
+Description=Ikoma Runner Service
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=${INSTALL_DIR}/runner.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF"
+
+# 6. Start service
+echo -e "Starting service..."
+sudo systemctl daemon-reload
+sudo systemctl enable ikoma-runner.service
+sudo systemctl restart ikoma-runner.service
+
+echo -e "${GREEN}Installation completed successfully!${NC}"
+echo -e "You can check logs with: ${YELLOW}journalctl -u ikoma-runner.service -f${NC}"

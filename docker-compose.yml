@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: ikoma-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ikoma_orders
+    # Retrait du mapping public pour la sécurité (accessible uniquement via le réseau Docker)
+    # ports:
+    #   - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ikoma_orders"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: ikoma-api
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/ikoma_orders
+      - IKOMA_ADMIN_KEY=${IKOMA_ADMIN_KEY}
+      - NODE_ENV=production
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # Utilisation de curl sur 127.0.0.1 pour forcer l'IPv4 et tester l'endpoint réel
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgres_data:

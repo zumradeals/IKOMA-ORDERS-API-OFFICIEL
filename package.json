@@ -1,0 +1,40 @@
+{
+  "name": "ikoma-orders-api",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node dist/db/migrate.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.28.0",
+  "dependencies": {
+    "@fastify/postgres": "^6.0.2",
+    "bcrypt": "^6.0.0",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.45.1",
+    "fastify": "^5.6.2",
+    "fastify-plugin": "^5.1.0",
+    "pg": "^8.16.3",
+    "postgres": "^3.4.8",
+    "uuid": "^13.0.0",
+    "zod": "^4.3.5"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/node": "^25.0.8",
+    "@types/pg": "^8.16.0",
+    "@types/uuid": "^11.0.0",
+    "drizzle-kit": "^0.31.8",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
