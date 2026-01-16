@@ -7,15 +7,32 @@ import * as schema from '../db/schema.js';
 type DbType = NodePgDatabase<typeof schema>;
 
 export const startReconcileWorker = (db: DbType, logger: FastifyBaseLogger) => {
-  const RECONCILE_INTERVAL = 30000; // 30 seconds
-  const CLAIM_TIMEOUT = 60000; // 1 minute to start after claim
-  const HEARTBEAT_TIMEOUT = 120000; // 2 minutes without heartbeat
+  const BASE_INTERVAL = 30000; // 30 seconds
+  const BACKOFF_STEPS = [1000, 2000, 5000, 10000, 30000]; // Progressive backoff in ms
+  const CLAIM_TIMEOUT = 60000;
+  const HEARTBEAT_TIMEOUT = 120000;
+
+  let currentBackoffIdx = -1;
+  let isDbDown = false;
+  let timeoutId: NodeJS.Timeout | null = null;
+
+  const isDbError = (err: any): boolean => {
+    const msg = String(err?.message || '').toUpperCase();
+    const code = String(err?.code || '').toUpperCase();
+    return (
+      code === 'ECONNREFUSED' ||
+      code === 'ETIMEDOUT' ||
+      msg.includes('CONNECTION REFUSED') ||
+      msg.includes('AGGREGATEERROR') ||
+      msg.includes('DATABASE UNREACHABLE')
+    );
+  };
 
   const reconcile = async () => {
     const now = new Date();
     
     try {
-      // 1. Requeue CLAIMED expired (didn't start in time)
+      // 1. Requeue CLAIMED expired
       const expiredClaimed = await db.update(orders)
         .set({ 
           status: 'QUEUED', 
@@ -31,17 +48,10 @@ export const startReconcileWorker = (db: DbType, logger: FastifyBaseLogger) => {
         .returning();
       
       for (const order of expiredClaimed) {
-        logger.warn({
-          orderId: order.id,
-          runnerId: order.runnerId,
-          playbookKey: order.playbookKey,
-          previousStatus: 'CLAIMED',
-          targetStatus: 'QUEUED',
-          reason: 'Claim timeout'
-        }, `Order ${order.id} requeued: runner failed to start in time`);
+        logger.warn({ orderId: order.id, context: 'reconcile_worker' }, `Order ${order.id} requeued: runner failed to start in time`);
       }
 
-      // 2. Mark STALE RUNNING without heartbeat
+      // 2. Mark STALE RUNNING
       const staleRunning = await db.update(orders)
         .set({ 
           status: 'STALE', 
@@ -55,14 +65,7 @@ export const startReconcileWorker = (db: DbType, logger: FastifyBaseLogger) => {
         .returning();
 
       for (const order of staleRunning) {
-        logger.warn({
-          orderId: order.id,
-          runnerId: order.runnerId,
-          playbookKey: order.playbookKey,
-          previousStatus: 'RUNNING',
-          targetStatus: 'STALE',
-          reason: 'Heartbeat missing'
-        }, `Order ${order.id} marked as STALE: no heartbeat received`);
+        logger.warn({ orderId: order.id, context: 'reconcile_worker' }, `Order ${order.id} marked as STALE: no heartbeat received`);
       }
 
       // 3. Apply TIMEOUT
@@ -80,18 +83,10 @@ export const startReconcileWorker = (db: DbType, logger: FastifyBaseLogger) => {
         .returning();
 
       for (const order of timedOut) {
-        logger.error({
-          orderId: order.id,
-          runnerId: order.runnerId,
-          playbookKey: order.playbookKey,
-          previousStatus: 'RUNNING',
-          targetStatus: 'TIMED_OUT',
-          reason: 'Execution timeout'
-        }, `Order ${order.id} TIMED_OUT: execution exceeded ${order.timeoutSec}s`);
+        logger.error({ orderId: order.id, context: 'reconcile_worker' }, `Order ${order.id} TIMED_OUT: execution exceeded ${order.timeoutSec}s`);
       }
 
-      // 4. Handle Retries for FAILED/STALE/TIMED_OUT
-      // We only retry if attempt < maxAttempts
+      // 4. Handle Retries
       const toRetry = await db.update(orders)
         .set({ 
           status: 'QUEUED', 
@@ -107,18 +102,10 @@ export const startReconcileWorker = (db: DbType, logger: FastifyBaseLogger) => {
         .returning();
 
       for (const order of toRetry) {
-        logger.info({
-          orderId: order.id,
-          runnerId: null,
-          playbookKey: order.playbookKey,
-          previousStatus: order.status,
-          targetStatus: 'QUEUED',
-          attempt: order.attempt,
-          maxAttempts: order.maxAttempts
-        }, `Order ${order.id} scheduled for retry (Attempt ${order.attempt}/${order.maxAttempts})`);
+        logger.info({ orderId: order.id, context: 'reconcile_worker' }, `Order ${order.id} scheduled for retry (Attempt ${order.attempt}/${order.maxAttempts})`);
       }
 
-      // 5. Finalize FAILED for those who reached maxAttempts
+      // 5. Finalize FAILED
       const finalFailed = await db.update(orders)
         .set({
           status: 'FAILED',
@@ -132,37 +119,70 @@ export const startReconcileWorker = (db: DbType, logger: FastifyBaseLogger) => {
         .returning();
 
       for (const order of finalFailed) {
-        logger.error({
-          orderId: order.id,
-          runnerId: order.runnerId,
-          playbookKey: order.playbookKey,
-          previousStatus: order.status,
-          targetStatus: 'FAILED',
-          reason: 'Max attempts reached'
-        }, `Order ${order.id} permanently FAILED: max retry attempts reached`);
+        logger.error({ orderId: order.id, context: 'reconcile_worker' }, `Order ${order.id} permanently FAILED: max retry attempts reached`);
+      }
+
+      // Reset backoff on success
+      if (isDbDown) {
+        logger.info({ context: 'reconcile_worker_loop' }, 'Database connection restored. Resetting backoff.');
+        isDbDown = false;
+        currentBackoffIdx = -1;
       }
 
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err));
+      
+      if (isDbError(err)) {
+        currentBackoffIdx = Math.min(currentBackoffIdx + 1, BACKOFF_STEPS.length - 1);
+        const nextRetryInMs = BACKOFF_STEPS[currentBackoffIdx];
+        
+        const logPayload = {
+          context: 'reconcile_worker_loop',
+          errorCode: 'DB_UNREACHABLE',
+          nextRetryInMs,
+          attempt: currentBackoffIdx + 1,
+          cause: error.message
+        };
+
+        if (!isDbDown) {
+          // First time DB goes down, log with stack
+          logger.error({ ...logPayload, stack: error.stack }, `Database unreachable. Starting backoff: ${error.message}`);
+          isDbDown = true;
+        } else {
+          // Subsequent logs are summarized
+          logger.warn(logPayload, `Database still unreachable. Retrying in ${nextRetryInMs}ms...`);
+        }
+        
+        // Schedule next retry with backoff
+        scheduleNext(nextRetryInMs);
+        return;
+      }
+
       logger.error({
         err: error,
         stack: error.stack,
-        context: 'reconcile_worker_loop',
-        timestamp: now.toISOString()
-      }, `Reconcile worker error: ${error.message}`);
+        context: 'reconcile_worker_loop'
+      }, `Reconcile worker unexpected error: ${error.message}`);
     }
+
+    // Schedule next regular run
+    scheduleNext(BASE_INTERVAL);
+  };
+
+  const scheduleNext = (delay: number) => {
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => {
+      reconcile().catch(err => {
+        logger.error({ err }, 'Fatal error in reconcile execution');
+      });
+    }, delay);
   };
 
   logger.info('Reconcile worker started');
-  const interval = setInterval(() => {
-    reconcile().catch((err: unknown) => {
-      const error = err instanceof Error ? err : new Error(String(err));
-      logger.error({ err: error }, `Fatal error in reconcile interval: ${error.message}`);
-    });
-  }, RECONCILE_INTERVAL);
+  scheduleNext(1000); // Initial start
   
   return () => {
     logger.info('Reconcile worker stopping');
-    clearInterval(interval);
+    if (timeoutId) clearTimeout(timeoutId);
   };
 };
