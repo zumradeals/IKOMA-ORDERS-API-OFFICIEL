@@ -5,7 +5,15 @@ import authPlugin from './plugins/auth.js';
 import adminRoutes from './routes/admin/index.js';
 import runnerRoutes from './routes/runner/index.js';
 import { startReconcileWorker } from './workers/reconcile.js';
+import { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import * as schema from './db/schema.js';
 import fs from 'fs';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    db: NodePgDatabase<typeof schema>;
+  }
+}
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -75,7 +83,7 @@ fastify.setErrorHandler((error: unknown, request, reply) => {
 
 // Start reconcile worker after plugins are ready
 fastify.ready().then(() => {
-  startReconcileWorker((fastify as any).db, fastify.log);
+  startReconcileWorker(fastify.db, fastify.log);
 });
 
 const start = async () => {
