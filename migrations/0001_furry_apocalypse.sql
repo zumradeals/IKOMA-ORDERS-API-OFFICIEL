@@ -1,0 +1,1 @@
+CREATE INDEX "deterministic_claim_idx" ON "orders" USING btree ("status","runner_id","created_at");

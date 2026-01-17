@@ -34,18 +34,33 @@ const runnerRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/runner/orders/claim-next', async (request: any, reply) => {
     const runnerId = request.runner.id;
     
-    const [claimedOrder] = await db.update(orders)
-      .set({ 
-        status: 'CLAIMED', 
-        runnerId, 
-        claimedAt: new Date(),
-        updatedAt: new Date() 
-      })
-      .where(and(
-        eq(orders.status, 'QUEUED'),
-        or(eq(orders.runnerId, runnerId), isNull(orders.runnerId))
-      ))
-      .returning();
+    const claimedOrder = await db.transaction(async (tx: any) => {
+      const [orderToClaim] = await tx.select({ id: orders.id })
+        .from(orders)
+        .where(and(
+          eq(orders.status, 'QUEUED'),
+          or(eq(orders.runnerId, runnerId), isNull(orders.runnerId))
+        ))
+        .orderBy(orders.createdAt)
+        .limit(1)
+        .for('update', { skipLocked: true });
+
+      if (!orderToClaim) {
+        return null;
+      }
+
+      const [updated] = await tx.update(orders)
+        .set({ 
+          status: 'CLAIMED', 
+          runnerId, 
+          claimedAt: new Date(),
+          updatedAt: new Date() 
+        })
+        .where(eq(orders.id, orderToClaim.id))
+        .returning();
+      
+      return updated;
+    });
 
     if (!claimedOrder) {
       return reply.code(204).send();

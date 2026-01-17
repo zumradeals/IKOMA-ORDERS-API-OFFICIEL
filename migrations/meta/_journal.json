@@ -8,6 +8,13 @@
       "when": 1768351635261,
       "tag": "0000_jittery_mystique",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1768665767743,
+      "tag": "0001_furry_apocalypse",
+      "breakpoints": true
     }
   ]
 }
