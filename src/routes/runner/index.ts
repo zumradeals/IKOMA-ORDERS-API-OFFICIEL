@@ -1,11 +1,16 @@
 import { FastifyPluginAsync } from 'fastify';
 import { runners, orders, orderLogs } from '../../db/schema.js';
-import { eq, and, isNull, or, asc } from 'drizzle-orm';
+import { eq, and, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
+import { ReportV1Schema } from '../../contracts/report.v1.js';
 
 const runnerRoutes: FastifyPluginAsync = async (fastify) => {
   const db = (fastify as any).db;
   fastify.addHook('preHandler', (fastify as any).verifyRunner);
+
+  const idParamSchema = z.object({
+    id: z.string().uuid(),
+  });
 
   fastify.post('/runner/heartbeat', async (request: any) => {
     const runnerId = request.runner.id;
@@ -29,10 +34,6 @@ const runnerRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/runner/orders/claim-next', async (request: any, reply) => {
     const runnerId = request.runner.id;
     
-    // Atomic claim: find first QUEUED order for this runner or unassigned
-    // Note: In a real high-concurrency environment, we'd use a transaction with SKIP LOCKED
-    // For this implementation, we'll use a simple update with returning
-    
     const [claimedOrder] = await db.update(orders)
       .set({ 
         status: 'CLAIMED', 
@@ -54,7 +55,7 @@ const runnerRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.post('/runner/orders/:id/start', async (request: any, reply) => {
-    const { id } = request.params;
+    const { id } = idParamSchema.parse(request.params);
     const runnerId = request.runner.id;
 
     const [startedOrder] = await db.update(orders)
@@ -72,13 +73,20 @@ const runnerRoutes: FastifyPluginAsync = async (fastify) => {
       .returning();
 
     if (!startedOrder) {
-      return reply.code(400).send({ error: 'Order cannot be started' });
+      const [order] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+      if (!order) {
+        return reply.code(409).send({ error: 'Conflict', reason: 'order_not_found' });
+      }
+      if (order.runnerId !== runnerId) {
+        return reply.code(409).send({ error: 'Conflict', reason: 'wrong_runner' });
+      }
+      return reply.code(409).send({ error: 'Conflict', reason: 'invalid_status', currentStatus: order.status });
     }
     return startedOrder;
   });
 
   fastify.post('/runner/orders/:id/heartbeat', async (request: any, reply) => {
-    const { id } = request.params;
+    const { id } = idParamSchema.parse(request.params);
     const runnerId = request.runner.id;
 
     const [updatedOrder] = await db.update(orders)
@@ -94,25 +102,24 @@ const runnerRoutes: FastifyPluginAsync = async (fastify) => {
       .returning();
 
     if (!updatedOrder) {
-      return reply.code(400).send({ error: 'Order heartbeat failed' });
+      const [order] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+      if (!order) {
+        return reply.code(409).send({ error: 'Conflict', reason: 'order_not_found' });
+      }
+      if (order.runnerId !== runnerId) {
+        return reply.code(409).send({ error: 'Conflict', reason: 'wrong_runner' });
+      }
+      return reply.code(409).send({ error: 'Conflict', reason: 'invalid_status', currentStatus: order.status });
     }
     return { ok: true };
   });
 
   fastify.post('/runner/orders/:id/complete', async (request: any, reply) => {
-    const { id } = request.params;
+    const { id } = idParamSchema.parse(request.params);
     const runnerId = request.runner.id;
+    
     const body = z.object({
-      report: z.object({
-        version: z.literal('v1'),
-        ok: z.boolean(),
-        summary: z.string(),
-        startedAt: z.string(),
-        finishedAt: z.string(),
-        steps: z.array(z.any()),
-        artifacts: z.record(z.string(), z.any()),
-        errors: z.array(z.any()),
-      }),
+      report: ReportV1Schema,
     }).safeParse(request.body);
 
     if (!body.success) {
@@ -124,7 +131,7 @@ const runnerRoutes: FastifyPluginAsync = async (fastify) => {
           updatedAt: new Date() 
         })
         .where(eq(orders.id, id));
-      return reply.code(400).send({ error: 'Invalid report format' });
+      return reply.code(400).send({ error: 'Invalid report format', details: body.error.format() });
     }
 
     const status = body.data.report.ok ? 'SUCCEEDED' : 'FAILED';
@@ -144,7 +151,14 @@ const runnerRoutes: FastifyPluginAsync = async (fastify) => {
       .returning();
 
     if (!completedOrder) {
-      return reply.code(400).send({ error: 'Order completion failed' });
+      const [order] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+      if (!order) {
+        return reply.code(409).send({ error: 'Conflict', reason: 'order_not_found' });
+      }
+      if (order.runnerId !== runnerId) {
+        return reply.code(409).send({ error: 'Conflict', reason: 'wrong_runner' });
+      }
+      return reply.code(409).send({ error: 'Conflict', reason: 'invalid_status', currentStatus: order.status });
     }
     return completedOrder;
   });

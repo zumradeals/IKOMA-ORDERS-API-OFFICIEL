@@ -24,7 +24,7 @@ const authPlugin: FastifyPluginCallback = (fastify, opts, done) => {
     const runnerToken = request.headers['x-runner-token'] as string;
 
     // Admin Auth
-    if (adminKey === process.env.IKOMA_ADMIN_KEY) {
+    if (adminKey && adminKey === process.env.IKOMA_ADMIN_KEY) {
       request.isAdmin = true;
       return;
     }
@@ -49,13 +49,21 @@ const authPlugin: FastifyPluginCallback = (fastify, opts, done) => {
 
   fastify.decorate('verifyAdmin', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!request.isAdmin) {
-      reply.code(401).send({ error: 'Unauthorized: Admin access required' });
+      return reply.code(401).send({ 
+        error: 'Unauthorized', 
+        message: 'Admin access required',
+        code: 'ADMIN_AUTH_REQUIRED'
+      });
     }
   });
 
   fastify.decorate('verifyRunner', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!request.runner) {
-      reply.code(401).send({ error: 'Unauthorized: Runner access required' });
+      return reply.code(401).send({ 
+        error: 'Unauthorized', 
+        message: 'Runner access required',
+        code: 'RUNNER_AUTH_REQUIRED'
+      });
     }
   });
 

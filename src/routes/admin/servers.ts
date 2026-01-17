@@ -10,6 +10,10 @@ const serverSchema = z.object({
   tags: z.array(z.string()).optional(),
 });
 
+const idParamSchema = z.object({
+  id: z.string().uuid(),
+});
+
 const serversRoutes: FastifyPluginAsync = async (fastify) => {
   const db = (fastify as any).db;
 
@@ -23,8 +27,8 @@ const serversRoutes: FastifyPluginAsync = async (fastify) => {
     return newServer;
   });
 
-  fastify.patch('/servers/:id/attach-runner', async (request: any, reply) => {
-    const { id } = request.params;
+  const attachRunnerHandler = async (request: any, reply: any) => {
+    const { id } = idParamSchema.parse(request.params);
     const { runnerId } = z.object({ runnerId: z.string().uuid() }).parse(request.body);
     
     const [updatedServer] = await db.update(servers)
@@ -36,7 +40,10 @@ const serversRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(404).send({ error: 'Server not found' });
     }
     return updatedServer;
-  });
+  };
+
+  fastify.patch('/servers/:id/attach-runner', attachRunnerHandler);
+  fastify.post('/servers/:id/attach-runner', attachRunnerHandler);
 };
 
 export default serversRoutes;
