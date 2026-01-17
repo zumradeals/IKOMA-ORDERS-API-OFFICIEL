@@ -9,89 +9,138 @@ echo "🚀 Starting IKOMA Orders API Smoke Test"
 echo "📍 API URL: $API_URL"
 
 # Helper for API calls
+# Usage: api_call METHOD PATH DATA [HEADER1] [HEADER2] ...
 api_call() {
   local method=$1
   local path=$2
   local data=$3
-  local auth_header="x-ikoma-admin-key: $ADMIN_KEY"
+  shift 3
   
-  if [ -n "$4" ]; then
-    auth_header="$4"
+  local curl_args=("-s" "-X" "$method" "$API_URL$path" "-H" "Content-Type: application/json")
+  
+  if [ $# -gt 0 ]; then
+    # Use custom headers if provided
+    for header in "$@"; do
+      curl_args+=("-H" "$header")
+    done
+  else
+    # Default to admin key if no custom headers
+    curl_args+=("-H" "x-ikoma-admin-key: $ADMIN_KEY")
   fi
 
-  curl -s -X "$method" "$API_URL$path" \
-    -H "Content-Type: application/json" \
-    -H "$auth_header" \
-    -d "$data"
+  if [ -n "$data" ] && [ "$data" != "null" ]; then
+    curl_args+=("-d" "$data")
+  fi
+
+  curl "${curl_args[@]}"
+}
+
+# Helper to extract value from JSON string without jq
+extract_json_value() {
+  local json=$1
+  local key=$2
+  echo "$json" | grep -o "\"$key\":\"[^\"]*\"" | cut -d'"' -f4
 }
 
 # 1. Create Playbook
 echo "📝 1. Creating Playbook..."
 PLAYBOOK_KEY="smoke-test-$(date +%s)"
 PLAYBOOK_RES=$(api_call "POST" "/playbooks" "{\"key\":\"$PLAYBOOK_KEY\",\"name\":\"Smoke Test Playbook\",\"category\":\"BASE\",\"riskLevel\":\"LOW\",\"schemaVersion\":\"1.0\",\"spec\":{\"steps\":[]}}")
+if [[ ! "$PLAYBOOK_RES" == *"$PLAYBOOK_KEY"* ]]; then
+  echo "❌ Failed to create playbook. Response: $PLAYBOOK_RES"
+  exit 1
+fi
 echo "✅ Playbook created: $PLAYBOOK_KEY"
 
 # 2. Create Server
 echo "🖥️ 2. Creating Server..."
 SERVER_RES=$(api_call "POST" "/servers" "{\"name\":\"Smoke Server\",\"baseUrl\":\"https://example.com\"}")
-SERVER_ID=$(echo $SERVER_RES | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+SERVER_ID=$(extract_json_value "$SERVER_RES" "id")
+if [ -z "$SERVER_ID" ]; then
+  echo "❌ Failed to create server. Response: $SERVER_RES"
+  exit 1
+fi
 echo "✅ Server created: $SERVER_ID"
 
 # 3. Create Runner
 echo "🏃 3. Creating Runner..."
 RUNNER_RES=$(api_call "POST" "/runners" "{\"name\":\"Smoke Runner\"}")
-RUNNER_ID=$(echo $RUNNER_RES | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-RUNNER_TOKEN=$(echo $RUNNER_RES | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+RUNNER_ID=$(extract_json_value "$RUNNER_RES" "id")
+RUNNER_TOKEN=$(extract_json_value "$RUNNER_RES" "token")
+if [ -z "$RUNNER_ID" ] || [ -z "$RUNNER_TOKEN" ]; then
+  echo "❌ Failed to create runner. Response: $RUNNER_RES"
+  exit 1
+fi
 echo "✅ Runner created: $RUNNER_ID"
+
+# Runner Headers
+RUNNER_H1="x-runner-id: $RUNNER_ID"
+RUNNER_H2="x-runner-token: $RUNNER_TOKEN"
 
 # 4. Attach Runner to Server
 echo "🔗 4. Attaching Runner to Server..."
-api_call "PATCH" "/servers/$SERVER_ID/attach-runner" "{\"runnerId\":\"$RUNNER_ID\"}" > /dev/null
+ATTACH_RES=$(api_call "PATCH" "/servers/$SERVER_ID/attach-runner" "{\"runnerId\":\"$RUNNER_ID\"}")
+if [[ ! "$ATTACH_RES" == *"$RUNNER_ID"* ]]; then
+  echo "❌ Failed to attach runner. Response: $ATTACH_RES"
+  exit 1
+fi
 echo "✅ Runner attached"
 
 # 5. Create Order
 echo "📦 5. Creating Order..."
 IDEM_KEY="idem-$(date +%s)"
 ORDER_RES=$(api_call "POST" "/orders" "{\"serverId\":\"$SERVER_ID\",\"playbookKey\":\"$PLAYBOOK_KEY\",\"action\":\"test\",\"idempotencyKey\":\"$IDEM_KEY\",\"createdBy\":\"smoke-test\"}")
-ORDER_ID=$(echo $ORDER_RES | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+ORDER_ID=$(extract_json_value "$ORDER_RES" "id")
+if [ -z "$ORDER_ID" ]; then
+  echo "❌ Failed to create order. Response: $ORDER_RES"
+  exit 1
+fi
 echo "✅ Order created: $ORDER_ID"
-
-# Runner Auth Header
-RUNNER_AUTH="x-runner-id: $RUNNER_ID"
-RUNNER_AUTH_FULL="$RUNNER_AUTH\nx-runner-token: $RUNNER_TOKEN"
 
 # 6. Runner Heartbeat
 echo "💓 6. Runner Heartbeat..."
-api_call "POST" "/runner/heartbeat" "{\"status\":\"ONLINE\"}" "$(echo -e $RUNNER_AUTH_FULL)" > /dev/null
+HB_RES=$(api_call "POST" "/runner/heartbeat" "{\"status\":\"ONLINE\"}" "$RUNNER_H1" "$RUNNER_H2")
+if [[ ! "$HB_RES" == *"ok\":true"* ]]; then
+  echo "❌ Heartbeat failed. Response: $HB_RES"
+  exit 1
+fi
 echo "✅ Heartbeat sent"
 
 # 7. Claim Order
 echo "📥 7. Claiming Order..."
-CLAIM_RES=$(api_call "POST" "/runner/orders/claim-next" "{}" "$(echo -e $RUNNER_AUTH_FULL)")
-CLAIMED_ID=$(echo $CLAIM_RES | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+CLAIM_RES=$(api_call "POST" "/runner/orders/claim-next" "{}" "$RUNNER_H1" "$RUNNER_H2")
+CLAIMED_ID=$(extract_json_value "$CLAIM_RES" "id")
 if [ "$CLAIMED_ID" != "$ORDER_ID" ]; then
-  echo "❌ Failed to claim correct order. Expected $ORDER_ID, got $CLAIMED_ID"
+  echo "❌ Failed to claim correct order. Expected $ORDER_ID, got $CLAIMED_ID. Response: $CLAIM_RES"
   exit 1
 fi
 echo "✅ Order claimed"
 
 # 8. Start Order
 echo "🎬 8. Starting Order..."
-api_call "POST" "/runner/orders/$ORDER_ID/start" "{}" "$(echo -e $RUNNER_AUTH_FULL)" > /dev/null
+START_RES=$(api_call "POST" "/runner/orders/$ORDER_ID/start" "{}" "$RUNNER_H1" "$RUNNER_H2")
+if [[ ! "$START_RES" == *"$ORDER_ID"* ]]; then
+  echo "❌ Failed to start order. Response: $START_RES"
+  exit 1
+fi
 echo "✅ Order started"
 
 # 9. Complete Order
 echo "🏁 9. Completing Order..."
 REPORT="{\"report\":{\"version\":\"v1\",\"ok\":true,\"summary\":\"Smoke test success\",\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"finishedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"steps\":[],\"artifacts\":{},\"errors\":[]}}"
-api_call "POST" "/runner/orders/$ORDER_ID/complete" "$REPORT" "$(echo -e $RUNNER_AUTH_FULL)" > /dev/null
+COMP_RES=$(api_call "POST" "/runner/orders/$ORDER_ID/complete" "$REPORT" "$RUNNER_H1" "$RUNNER_H2")
+if [[ ! "$COMP_RES" == *"$ORDER_ID"* ]]; then
+  echo "❌ Failed to complete order. Response: $COMP_RES"
+  exit 1
+fi
 echo "✅ Order completed"
 
 # 10. Verify Final Status
 echo "🔍 10. Verifying Final Status..."
 FINAL_RES=$(api_call "GET" "/orders/$ORDER_ID" "")
-FINAL_STATUS=$(echo $FINAL_RES | grep -o '"status":"[^"]*' | cut -d'"' -f4)
+FINAL_STATUS=$(extract_json_value "$FINAL_RES" "status")
 if [ "$FINAL_STATUS" != "SUCCEEDED" ]; then
-  echo "❌ Final status mismatch. Expected SUCCEEDED, got $FINAL_STATUS"
+  echo "❌ Final status mismatch. Expected SUCCEEDED, got $FINAL_STATUS. Response: $FINAL_RES"
   exit 1
 fi
 echo "✅ Final status verified: $FINAL_STATUS"
