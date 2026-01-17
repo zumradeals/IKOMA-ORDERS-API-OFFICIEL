@@ -2,6 +2,38 @@
 
 IKOMA Orders API est le cœur d’orchestration du système IKOMA Control Plane. Il gère les ordres systèmes, les runners et les serveurs.
 
+## 🚀 First Install Checklist (Anti-Récidive)
+
+Pour garantir une installation robuste sur n'importe quel VPS réinstallé, suivez cette checklist :
+
+1.  **Environnement** : Copiez `.env.example` vers `.env` et configurez les variables.
+    *   `DATABASE_URL` : URL de connexion PostgreSQL.
+    *   `IKOMA_ADMIN_KEY` : Clé secrète pour l'accès admin.
+2.  **Dépendances** : Installez les dépendances avec `pnpm install`.
+3.  **Base de données** :
+    *   Exécutez les migrations : `npm run db:migrate`
+    *   (Optionnel) Seed initial : `SEED=true npm run db:seed`
+4.  **Validation** : Lancez le smoke test pour vérifier que tout le flow fonctionne :
+    *   `npm run smoke` (Assurez-vous que le serveur tourne sur le port 3000)
+
+## 🛠 Commandes Exactes
+
+| Action | Commande |
+| :--- | :--- |
+| **Installation** | `pnpm install` |
+| **Build** | `npm run build` |
+| **Migrations** | `npm run db:migrate` |
+| **Seeding** | `SEED=true npm run db:seed` |
+| **Démarrage** | `npm start` |
+| **Smoke Test** | `npm run smoke` |
+
+## 🔒 Sécurité & Robustesse
+
+*   **Validation Zod** : Tous les IDs sont validés comme UUIDs. Les rapports de complétion suivent un schéma strict (`src/contracts/report.v1.ts`).
+*   **Erreurs Diagnostiques** : En cas de conflit (ex: commande déjà prise), l'API retourne un code `409` avec une raison précise (`order_not_found`, `wrong_runner`, `invalid_status`).
+*   **Middlewares Sécurisés** : Les accès Admin et Runner sont strictement contrôlés et stoppent l'exécution immédiatement en cas d'échec (401).
+*   **Harmonisation** : La route `/servers/:id/attach-runner` accepte indifféremment `PATCH` et `POST`.
+
 ## 🧭 Doctrine & Stratégie
 Ce projet suit une doctrine de **Pure ESM** (ECMAScript Modules) pour garantir la cohérence entre le développement TypeScript, le runtime Node.js et les conteneurs Docker.
 - **Runtime** : Node.js 22+
@@ -74,6 +106,7 @@ Utilisez les headers :
 - `GET /v1/servers`: Liste des serveurs.
 - `POST /v1/servers`: Créer un serveur.
 - `PATCH /v1/servers/:id/attach-runner`: Attacher un runner à un serveur.
+- `POST /v1/servers/:id/attach-runner`: Attacher un runner à un serveur (Alias POST).
 - `GET /v1/runners`: Liste des runners.
 - `POST /v1/runners`: Créer un runner (retourne le token).
 - `POST /v1/orders`: Créer un ordre.
@@ -85,24 +118,9 @@ Utilisez les headers :
 - `POST /v1/runner/orders/:id/start`: Marquer un ordre comme démarré.
 - `POST /v1/runner/orders/:id/complete`: Terminer un ordre avec un rapport.
 
-## 🧪 Exemples de tests (curl)
+## 📝 Contrats de Données
 
-### Créer un Runner (Admin)
-```bash
-curl -X POST http://localhost:3000/v1/runners \
-  -H "x-ikoma-admin-key: super-secret-admin-key" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Runner-01", "scopes": ["platform.caddy"]}'
-```
-
-### Heartbeat (Runner)
-```bash
-curl -X POST http://localhost:3000/v1/runner/heartbeat \
-  -H "x-runner-id: <RUNNER_ID>" \
-  -H "x-runner-token: <RUNNER_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"status": "ONLINE"}'
-```
+Le format des rapports est centralisé dans `src/contracts/report.v1.ts`. Utilisez le helper `makeReport()` pour garantir la conformité.
 
 ## 🔄 Système de Réconciliation
 Un worker interne s'exécute toutes les 30 secondes pour :

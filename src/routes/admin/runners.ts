@@ -11,6 +11,10 @@ const runnerSchema = z.object({
   capabilities: z.record(z.string(), z.any()).optional(),
 });
 
+const idParamSchema = z.object({
+  id: z.string().uuid(),
+});
+
 const runnersRoutes: FastifyPluginAsync = async (fastify) => {
   const db = (fastify as any).db;
 
@@ -45,7 +49,7 @@ const runnersRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.patch('/runners/:id', async (request: any, reply) => {
-    const { id } = request.params;
+    const { id } = idParamSchema.parse(request.params);
     const body = runnerSchema.partial().extend({
       status: z.enum(['ONLINE', 'OFFLINE', 'DISABLED']).optional(),
     }).parse(request.body);
@@ -63,7 +67,7 @@ const runnersRoutes: FastifyPluginAsync = async (fastify) => {
 
   // POST /v1/runners/:id/token/reset (formerly rotate-token)
   fastify.post('/runners/:id/token/reset', async (request: any, reply) => {
-    const { id } = request.params;
+    const { id } = idParamSchema.parse(request.params);
     
     // Check if runner exists
     const [exists] = await db.select({ id: runners.id }).from(runners).where(eq(runners.id, id)).limit(1);
@@ -84,7 +88,7 @@ const runnersRoutes: FastifyPluginAsync = async (fastify) => {
 
   // Keep rotate-token for backward compatibility if needed, but pointing to the same logic
   fastify.post('/runners/:id/rotate-token', async (request: any, reply) => {
-    const { id } = request.params;
+    const { id } = idParamSchema.parse(request.params);
     const clearToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = await bcrypt.hash(clearToken, 10);
 

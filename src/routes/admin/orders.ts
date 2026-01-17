@@ -15,6 +15,10 @@ const orderCreateSchema = z.object({
   createdBy: z.string(),
 });
 
+const idParamSchema = z.object({
+  id: z.string().uuid(),
+});
+
 const ordersRoutes: FastifyPluginAsync = async (fastify) => {
   const db = (fastify as any).db;
 
@@ -23,7 +27,7 @@ const ordersRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.get('/orders/:id', async (request: any, reply) => {
-    const { id } = request.params;
+    const { id } = idParamSchema.parse(request.params);
     const [order] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
     if (!order) return reply.code(404).send({ error: 'Order not found' });
     return order;
@@ -45,20 +49,28 @@ const ordersRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.post('/orders/:id/cancel', async (request: any, reply) => {
-    const { id } = request.params;
+    const { id } = idParamSchema.parse(request.params);
     const [updatedOrder] = await db.update(orders)
       .set({ status: 'CANCELED', updatedAt: new Date() })
       .where(and(eq(orders.id, id), eq(orders.status, 'QUEUED')))
       .returning();
 
     if (!updatedOrder) {
-      return reply.code(400).send({ error: 'Order cannot be canceled (not in QUEUED state)' });
+      const [order] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+      if (!order) {
+        return reply.code(404).send({ error: 'Order not found' });
+      }
+      return reply.code(400).send({ 
+        error: 'Order cannot be canceled', 
+        reason: 'invalid_status', 
+        currentStatus: order.status 
+      });
     }
     return updatedOrder;
   });
 
   fastify.get('/orders/:id/logs', async (request: any, reply) => {
-    const { id } = request.params;
+    const { id } = idParamSchema.parse(request.params);
     return await db.select().from(orderLogs).where(eq(orderLogs.orderId, id));
   });
 };
