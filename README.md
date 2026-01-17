@@ -11,7 +11,8 @@ Pour garantir une installation robuste sur n'importe quel VPS réinstallé, suiv
     *   `IKOMA_ADMIN_KEY` : Clé secrète pour l'accès admin.
 2.  **Dépendances** : Installez les dépendances avec `pnpm install`.
 3.  **Base de données** :
-    *   Exécutez les migrations : `npm run db:migrate`
+    *   **Automatique** : Les migrations sont appliquées automatiquement au démarrage du conteneur Docker.
+    *   **Manuel** (si nécessaire) : `npm run db:migrate`
     *   (Optionnel) Seed initial : `SEED=true npm run db:seed`
 4.  **Validation** : Lancez le smoke test pour vérifier que tout le flow fonctionne :
     *   `npm run smoke` (Assurez-vous que le serveur tourne sur le port 3000)
@@ -77,6 +78,8 @@ Ce projet suit une doctrine de **Pure ESM** (ECMAScript Modules) pour garantir l
    ```bash
    docker-compose up -d
    ```
+
+Le conteneur `api` attendra automatiquement que la base de données soit prête et appliquera les migrations avant de démarrer. Si les migrations échouent, le conteneur s'arrêtera (fail-fast).
 
 ### Installation Automatisée (VPS)
 
