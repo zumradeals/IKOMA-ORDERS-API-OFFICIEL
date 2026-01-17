@@ -86,16 +86,33 @@ if [[ ! "$ATTACH_RES" == *"$RUNNER_ID"* ]]; then
 fi
 echo "✅ Runner attached"
 
-# 5. Create Order
-echo "📦 5. Creating Order..."
-IDEM_KEY="idem-$(date +%s)"
-ORDER_RES=$(api_call "POST" "/orders" "{\"serverId\":\"$SERVER_ID\",\"playbookKey\":\"$PLAYBOOK_KEY\",\"action\":\"test\",\"idempotencyKey\":\"$IDEM_KEY\",\"createdBy\":\"smoke-test\"}")
-ORDER_ID=$(extract_json_value "$ORDER_RES" "id")
-if [ -z "$ORDER_ID" ]; then
-  echo "❌ Failed to create order. Response: $ORDER_RES"
+# 5. Create Orders (Regression test for deterministic claim)
+echo "📦 5. Creating Orders (Regression test for deterministic claim)..."
+# Create first order
+IDEM_KEY_1="idem-1-$(date +%s)"
+ORDER_RES_1=$(api_call "POST" "/orders" "{\"serverId\":\"$SERVER_ID\",\"playbookKey\":\"$PLAYBOOK_KEY\",\"action\":\"test-1\",\"idempotencyKey\":\"$IDEM_KEY_1\",\"createdBy\":\"smoke-test\"}")
+ORDER_ID_1=$(extract_json_value "$ORDER_RES_1" "id")
+if [ -z "$ORDER_ID_1" ]; then
+  echo "❌ Failed to create order 1. Response: $ORDER_RES_1"
   exit 1
 fi
-echo "✅ Order created: $ORDER_ID"
+echo "✅ Order 1 created: $ORDER_ID_1"
+
+# Wait a bit to ensure different createdAt if needed (though DB precision should handle it)
+sleep 1
+
+# Create second order
+IDEM_KEY_2="idem-2-$(date +%s)"
+ORDER_RES_2=$(api_call "POST" "/orders" "{\"serverId\":\"$SERVER_ID\",\"playbookKey\":\"$PLAYBOOK_KEY\",\"action\":\"test-2\",\"idempotencyKey\":\"$IDEM_KEY_2\",\"createdBy\":\"smoke-test\"}")
+ORDER_ID_2=$(extract_json_value "$ORDER_RES_2" "id")
+if [ -z "$ORDER_ID_2" ]; then
+  echo "❌ Failed to create order 2. Response: $ORDER_RES_2"
+  exit 1
+fi
+echo "✅ Order 2 created: $ORDER_ID_2"
+
+# We will use ORDER_ID_1 for the rest of the smoke test as it should be claimed first
+ORDER_ID=$ORDER_ID_1
 
 # 6. Runner Heartbeat
 echo "💓 6. Runner Heartbeat..."

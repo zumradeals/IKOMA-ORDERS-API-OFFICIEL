@@ -128,7 +128,7 @@ Utilisez les headers :
 
 ### Runner
 - `POST /v1/runner/heartbeat`: Signal de vie du runner.
-- `POST /v1/runner/orders/claim-next`: Récupérer le prochain ordre disponible.
+- `POST /v1/runner/orders/claim-next`: Récupérer le prochain ordre disponible (récupère toujours la commande éligible la plus ancienne de manière atomique).
 - `POST /v1/runner/orders/:id/start`: Marquer un ordre comme démarré.
 - `POST /v1/runner/orders/:id/complete`: Terminer un ordre avec un rapport.
 
