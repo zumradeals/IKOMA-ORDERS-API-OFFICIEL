@@ -117,12 +117,21 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' ikoma-db)" == "healthy" 
     COUNT=$((COUNT + 1))
 done
 
-echo -e "${YELLOW}Exécution des migrations...${NC}"
-docker compose exec -T api pnpm run db:migrate || error_exit "Échec des migrations."
+echo -e "${YELLOW}Les migrations sont gérées automatiquement par le conteneur api au démarrage.${NC}"
 
 # 7. Validation finale
 echo -e "${GREEN}[7/7] Validation finale...${NC}"
-sleep 5 # Laisser un peu de temps à l'API pour démarrer après migration
+echo -e "${YELLOW}Attente que l'API soit prête (migrations incluses)...${NC}"
+MAX_WAIT=60
+COUNT=0
+until docker compose ps api | grep -q "healthy"; do
+    if [ $COUNT -ge $MAX_WAIT ]; then
+        docker compose logs api
+        error_exit "L'API n'est pas devenue saine à temps."
+    fi
+    sleep 2
+    COUNT=$((COUNT + 2))
+done
 
 # Test local
 if curl -fsS http://127.0.0.1:3000/health > /dev/null; then
