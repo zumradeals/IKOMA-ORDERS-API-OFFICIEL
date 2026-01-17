@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { runners, orders, orderLogs } from '../../db/schema.js';
-import { eq, and, isNull, or } from 'drizzle-orm';
+import { eq, and, isNull, or, asc } from 'drizzle-orm';
 import { z } from 'zod';
 import { ReportV1Schema } from '../../contracts/report.v1.js';
 
@@ -34,18 +34,36 @@ const runnerRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/runner/orders/claim-next', async (request: any, reply) => {
     const runnerId = request.runner.id;
     
-    const [claimedOrder] = await db.update(orders)
-      .set({ 
-        status: 'CLAIMED', 
-        runnerId, 
-        claimedAt: new Date(),
-        updatedAt: new Date() 
-      })
-      .where(and(
-        eq(orders.status, 'QUEUED'),
-        or(eq(orders.runnerId, runnerId), isNull(orders.runnerId))
-      ))
-      .returning();
+    // Deterministic and atomic claim using transaction and SKIP LOCKED
+    const claimedOrder = await db.transaction(async (tx: any) => {
+      // 1. Find the oldest eligible QUEUED order
+      const [targetOrder] = await tx.select({ id: orders.id })
+        .from(orders)
+        .where(and(
+          eq(orders.status, 'QUEUED'),
+          or(eq(orders.runnerId, runnerId), isNull(orders.runnerId))
+        ))
+        .orderBy(asc(orders.createdAt))
+        .limit(1)
+        .for('update', { skipLocked: true });
+
+      if (!targetOrder) {
+        return null;
+      }
+
+      // 2. Update the selected order to CLAIMED
+      const [updated] = await tx.update(orders)
+        .set({ 
+          status: 'CLAIMED', 
+          runnerId, 
+          claimedAt: new Date(),
+          updatedAt: new Date() 
+        })
+        .where(eq(orders.id, targetOrder.id))
+        .returning();
+
+      return updated;
+    });
 
     if (!claimedOrder) {
       return reply.code(204).send();

@@ -78,6 +78,8 @@ export const orders = pgTable('orders', {
     activeDedupeIdx: uniqueIndex('active_dedupe_idx').on(table.dedupeKey).where(
       sql`status IN ('QUEUED', 'CLAIMED', 'RUNNING')`
     ),
+    // Index for deterministic claim-next
+    claimNextIdx: index('claim_next_idx').on(table.status, table.runnerId, table.createdAt),
   };
 });
 

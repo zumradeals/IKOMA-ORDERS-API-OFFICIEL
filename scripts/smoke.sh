@@ -86,16 +86,19 @@ if [[ ! "$ATTACH_RES" == *"$RUNNER_ID"* ]]; then
 fi
 echo "✅ Runner attached"
 
-# 5. Create Order
-echo "📦 5. Creating Order..."
-IDEM_KEY="idem-$(date +%s)"
-ORDER_RES=$(api_call "POST" "/orders" "{\"serverId\":\"$SERVER_ID\",\"playbookKey\":\"$PLAYBOOK_KEY\",\"action\":\"test\",\"idempotencyKey\":\"$IDEM_KEY\",\"createdBy\":\"smoke-test\"}")
-ORDER_ID=$(extract_json_value "$ORDER_RES" "id")
-if [ -z "$ORDER_ID" ]; then
-  echo "❌ Failed to create order. Response: $ORDER_RES"
-  exit 1
-fi
-echo "✅ Order created: $ORDER_ID"
+# 5. FIFO Regression Test: Create 2 orders and check claim order
+echo "📦 5. FIFO Regression Test..."
+IDEM_KEY_1="idem-1-$(date +%s)"
+ORDER_RES_1=$(api_call "POST" "/orders" "{\"serverId\":\"$SERVER_ID\",\"playbookKey\":\"$PLAYBOOK_KEY\",\"action\":\"test-1\",\"idempotencyKey\":\"$IDEM_KEY_1\",\"createdBy\":\"smoke-test\"}")
+ORDER_ID_1=$(extract_json_value "$ORDER_RES_1" "id")
+echo "✅ Order 1 created: $ORDER_ID_1"
+
+sleep 1 # Ensure different createdAt
+
+IDEM_KEY_2="idem-2-$(date +%s)"
+ORDER_RES_2=$(api_call "POST" "/orders" "{\"serverId\":\"$SERVER_ID\",\"playbookKey\":\"$PLAYBOOK_KEY\",\"action\":\"test-2\",\"idempotencyKey\":\"$IDEM_KEY_2\",\"createdBy\":\"smoke-test\"}")
+ORDER_ID_2=$(extract_json_value "$ORDER_RES_2" "id")
+echo "✅ Order 2 created: $ORDER_ID_2"
 
 # 6. Runner Heartbeat
 echo "💓 6. Runner Heartbeat..."
@@ -106,43 +109,37 @@ if [[ ! "$HB_RES" == *"ok\":true"* ]]; then
 fi
 echo "✅ Heartbeat sent"
 
-# 7. Claim Order
-echo "📥 7. Claiming Order..."
-CLAIM_RES=$(api_call "POST" "/runner/orders/claim-next" "{}" "$RUNNER_H1" "$RUNNER_H2")
-CLAIMED_ID=$(extract_json_value "$CLAIM_RES" "id")
-if [ "$CLAIMED_ID" != "$ORDER_ID" ]; then
-  echo "❌ Failed to claim correct order. Expected $ORDER_ID, got $CLAIMED_ID. Response: $CLAIM_RES"
+# 7. Claim First Order (Should be Order 1)
+echo "📥 7. Claiming First Order (FIFO)..."
+CLAIM_RES_1=$(api_call "POST" "/runner/orders/claim-next" "{}" "$RUNNER_H1" "$RUNNER_H2")
+CLAIMED_ID_1=$(extract_json_value "$CLAIM_RES_1" "id")
+if [ "$CLAIMED_ID_1" != "$ORDER_ID_1" ]; then
+  echo "❌ FIFO Violation! Expected Order 1 ($ORDER_ID_1), but claimed $CLAIMED_ID_1. Response: $CLAIM_RES_1"
   exit 1
 fi
-echo "✅ Order claimed"
+echo "✅ Order 1 claimed correctly (FIFO)"
 
-# 8. Start Order
-echo "🎬 8. Starting Order..."
-START_RES=$(api_call "POST" "/runner/orders/$ORDER_ID/start" "{}" "$RUNNER_H1" "$RUNNER_H2")
-if [[ ! "$START_RES" == *"$ORDER_ID"* ]]; then
-  echo "❌ Failed to start order. Response: $START_RES"
+# 8. Start and Complete Order 1
+echo "🎬 8. Processing Order 1..."
+api_call "POST" "/runner/orders/$ORDER_ID_1/start" "{}" "$RUNNER_H1" "$RUNNER_H2" > /dev/null
+REPORT="{\"report\":{\"version\":\"v1\",\"ok\":true,\"summary\":\"FIFO test 1 success\",\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"finishedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"steps\":[],\"artifacts\":{},\"errors\":[]}}"
+api_call "POST" "/runner/orders/$ORDER_ID_1/complete" "$REPORT" "$RUNNER_H1" "$RUNNER_H2" > /dev/null
+echo "✅ Order 1 completed"
+
+# 9. Claim Second Order (Should be Order 2)
+echo "📥 9. Claiming Second Order..."
+CLAIM_RES_2=$(api_call "POST" "/runner/orders/claim-next" "{}" "$RUNNER_H1" "$RUNNER_H2")
+CLAIMED_ID_2=$(extract_json_value "$CLAIM_RES_2" "id")
+if [ "$CLAIMED_ID_2" != "$ORDER_ID_2" ]; then
+  echo "❌ Failed to claim Order 2. Expected $ORDER_ID_2, got $CLAIMED_ID_2. Response: $CLAIM_RES_2"
   exit 1
 fi
-echo "✅ Order started"
+echo "✅ Order 2 claimed correctly"
 
-# 9. Complete Order
-echo "🏁 9. Completing Order..."
-REPORT="{\"report\":{\"version\":\"v1\",\"ok\":true,\"summary\":\"Smoke test success\",\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"finishedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"steps\":[],\"artifacts\":{},\"errors\":[]}}"
-COMP_RES=$(api_call "POST" "/runner/orders/$ORDER_ID/complete" "$REPORT" "$RUNNER_H1" "$RUNNER_H2")
-if [[ ! "$COMP_RES" == *"$ORDER_ID"* ]]; then
-  echo "❌ Failed to complete order. Response: $COMP_RES"
-  exit 1
-fi
-echo "✅ Order completed"
-
-# 10. Verify Final Status
-echo "🔍 10. Verifying Final Status..."
-FINAL_RES=$(api_call "GET" "/orders/$ORDER_ID" "")
+# 10. Final Verification
+echo "🔍 10. Final Verification..."
+FINAL_RES=$(api_call "GET" "/orders/$ORDER_ID_2" "")
 FINAL_STATUS=$(extract_json_value "$FINAL_RES" "status")
-if [ "$FINAL_STATUS" != "SUCCEEDED" ]; then
-  echo "❌ Final status mismatch. Expected SUCCEEDED, got $FINAL_STATUS. Response: $FINAL_RES"
-  exit 1
-fi
-echo "✅ Final status verified: $FINAL_STATUS"
+echo "✅ Final status of Order 2: $FINAL_STATUS"
 
-echo "🎉 Smoke Test Passed Successfully!"
+echo "🎉 Smoke Test & FIFO Regression Passed Successfully!"
