@@ -27,6 +27,20 @@ Pour garantir une installation robuste sur n'importe quel VPS réinstallé, suiv
 | **Démarrage** | `npm start` |
 | **Smoke Test** | `npm run smoke` |
 
+### 🧪 Smoke Test en détail
+
+Le smoke test valide le cycle de vie complet d'une commande (Playbook -> Server -> Runner -> Order -> Claim -> Start -> Complete).
+
+**Variables d'environnement :**
+- `API_URL` : URL de l'API (par défaut : `http://localhost:3000/v1`)
+- `IKOMA_ADMIN_KEY` : Clé admin configurée sur le serveur.
+
+**Exemple de commande :**
+```bash
+# Depuis la racine du projet
+API_URL="http://localhost:3000/v1" IKOMA_ADMIN_KEY="votre-cle-admin" bash ./scripts/smoke.sh
+```
+
 ## 🔒 Sécurité & Robustesse
 
 *   **Validation Zod** : Tous les IDs sont validés comme UUIDs. Les rapports de complétion suivent un schéma strict (`src/contracts/report.v1.ts`).
