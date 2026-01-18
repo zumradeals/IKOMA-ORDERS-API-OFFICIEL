@@ -27,6 +27,24 @@ const serversRoutes: FastifyPluginAsync = async (fastify) => {
     return newServer;
   });
 
+  // PATCH /v1/servers/:id (explicit association or update)
+  fastify.patch('/servers/:id', async (request: any, reply) => {
+    const { id } = idParamSchema.parse(request.params);
+    const body = serverSchema.partial().extend({
+      runnerId: z.string().uuid().nullable().optional(),
+    }).parse(request.body);
+
+    const [updatedServer] = await db.update(servers)
+      .set({ ...body, updatedAt: new Date() })
+      .where(eq(servers.id, id))
+      .returning();
+
+    if (!updatedServer) {
+      return reply.code(404).send({ error: 'Server not found' });
+    }
+    return updatedServer;
+  });
+
   const attachRunnerHandler = async (request: any, reply: any) => {
     const { id } = idParamSchema.parse(request.params);
     const { runnerId } = z.object({ runnerId: z.string().uuid() }).parse(request.body);

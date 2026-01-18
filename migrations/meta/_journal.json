@@ -15,6 +15,13 @@
       "when": 1768665767743,
       "tag": "0001_furry_apocalypse",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1768695999080,
+      "tag": "0002_clean_caretaker",
+      "breakpoints": true
     }
   ]
 }

@@ -30,6 +30,10 @@ export const servers = pgTable('servers', {
   tags: text('tags').array().notNull().default([]),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => {
+  return {
+    runnerIdIdx: index('servers_runner_id_idx').on(table.runnerId),
+  };
 });
 
 export const playbooks = pgTable('playbooks', {
