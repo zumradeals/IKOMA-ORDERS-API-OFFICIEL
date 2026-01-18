@@ -42,6 +42,12 @@ Le smoke test valide le cycle de vie complet d'une commande (Playbook -> Server 
 API_URL="http://localhost:3000/v1" IKOMA_ADMIN_KEY="votre-cle-admin" bash ./scripts/smoke.sh
 ```
 
+## 🔗 Relation Serveur ↔ Runner
+
+La relation est possédée par `servers.runnerId`. 
+- Pour associer un runner à un serveur, utilisez `PATCH /v1/servers/:serverId { "runnerId": "..." }`.
+- L'endpoint `GET /v1/runners` expose `serverId` et `serverName` (dérivés de la table `servers`) pour permettre à l'UI de confirmer l'association dans les deux sens. Si aucun serveur n'est associé, ces champs sont `null`.
+
 ## 🔒 Sécurité & Robustesse
 
 *   **Validation Zod** : Tous les IDs sont validés comme UUIDs. Les rapports de complétion suivent un schéma strict (`src/contracts/report.v1.ts`).
@@ -122,9 +128,10 @@ Utilisez les headers :
 ### Admin
 - `GET /v1/servers`: Liste des serveurs.
 - `POST /v1/servers`: Créer un serveur.
-- `PATCH /v1/servers/:id/attach-runner`: Attacher un runner à un serveur.
-- `POST /v1/servers/:id/attach-runner`: Attacher un runner à un serveur (Alias POST).
-- `GET /v1/runners`: Liste des runners.
+- `PATCH /v1/servers/:id`: Mettre à jour un serveur (incluant `runnerId` pour l'association).
+- `PATCH /v1/servers/:id/attach-runner`: Attacher un runner à un serveur (Legacy).
+- `POST /v1/servers/:id/attach-runner`: Attacher un runner à un serveur (Alias POST Legacy).
+- `GET /v1/runners`: Liste des runners (inclut désormais `serverId` et `serverName`).
 - `POST /v1/runners`: Créer un runner (retourne le token).
 - `POST /v1/orders`: Créer un ordre.
 - `GET /v1/orders/:id`: Détails d'un ordre.

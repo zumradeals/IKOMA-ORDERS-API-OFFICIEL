@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
-import { runners } from '../../db/schema.js';
+import { runners, servers } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import bcrypt from 'bcrypt';
@@ -19,7 +19,22 @@ const runnersRoutes: FastifyPluginAsync = async (fastify) => {
   const db = (fastify as any).db;
 
   fastify.get('/runners', async () => {
-    return await db.select().from(runners);
+    const results = await db.select({
+      id: runners.id,
+      name: runners.name,
+      status: runners.status,
+      lastHeartbeatAt: runners.lastHeartbeatAt,
+      scopes: runners.scopes,
+      capabilities: runners.capabilities,
+      createdAt: runners.createdAt,
+      updatedAt: runners.updatedAt,
+      serverId: servers.id,
+      serverName: servers.name,
+    })
+    .from(runners)
+    .leftJoin(servers, eq(runners.id, servers.runnerId));
+    
+    return results;
   });
 
   // POST /v1/runners (create)
