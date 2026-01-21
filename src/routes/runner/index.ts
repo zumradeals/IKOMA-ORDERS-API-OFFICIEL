@@ -146,6 +146,14 @@ const runnerRoutes: FastifyPluginAsync = async (fastify) => {
           updatedAt: new Date() 
         })
         .where(eq(orders.id, id));
+      await db.insert(orderLogs).values({
+        orderId: id,
+        runnerId,
+        level: 'error',
+        message: 'Order failed: invalid report',
+        ts: new Date(),
+        meta: { errorCode: 'INVALID_REPORT' },
+      });
       return reply.code(400).send({ error: 'Invalid report format', details: body.error.format() });
     }
 
@@ -175,6 +183,14 @@ const runnerRoutes: FastifyPluginAsync = async (fastify) => {
       }
       return reply.code(409).send({ error: 'Conflict', reason: 'invalid_status', currentStatus: order.status });
     }
+    await db.insert(orderLogs).values({
+      orderId: id,
+      runnerId,
+      level: status === 'SUCCEEDED' ? 'info' : 'error',
+      message: `Order ${status.toLowerCase()}`,
+      ts: new Date(),
+      meta: { reportOk: body.data.report.ok },
+    });
     return completedOrder;
   });
 

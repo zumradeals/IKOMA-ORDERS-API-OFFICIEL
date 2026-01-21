@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
-import { orders, orderLogs } from '../../db/schema.js';
+import { orders, orderLogs, playbooks, runners, servers } from '../../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -13,6 +13,7 @@ const orderCreateSchema = z.object({
   timeoutSec: z.number().optional(),
   maxAttempts: z.number().optional(),
   createdBy: z.string(),
+  dryRun: z.boolean().optional(),
 });
 
 const idParamSchema = z.object({
@@ -35,17 +36,96 @@ const ordersRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post('/orders', async (request, reply) => {
     const body = orderCreateSchema.parse(request.body);
-    
+    const now = new Date();
+
+    const [server] = await db.select({ runnerId: servers.runnerId })
+      .from(servers)
+      .where(eq(servers.id, body.serverId))
+      .limit(1);
+
+    if (!server) {
+      return reply.code(400).send({ error: 'Server not found', reason: 'server_not_found' });
+    }
+
+    if (!server.runnerId) {
+      return reply.code(400).send({ error: 'Server has no runner', reason: 'runner_not_assigned' });
+    }
+
+    if (body.dryRun) {
+      const [playbook] = await db.select({ key: playbooks.key })
+        .from(playbooks)
+        .where(eq(playbooks.key, body.playbookKey))
+        .limit(1);
+
+      if (!playbook) {
+        return reply.code(400).send({ error: 'Playbook not found', reason: 'playbook_not_found' });
+      }
+
+      const [runner] = await db.select({ id: runners.id, lastHeartbeatAt: runners.lastHeartbeatAt })
+        .from(runners)
+        .where(eq(runners.id, server.runnerId))
+        .limit(1);
+
+      const isOnline = !!runner?.lastHeartbeatAt
+        && now.getTime() - runner.lastHeartbeatAt.getTime() <= 60_000;
+
+      if (!runner) {
+        return reply.code(400).send({ error: 'Runner not found', reason: 'runner_not_found' });
+      }
+
+      if (!isOnline) {
+        return reply.code(400).send({ error: 'Runner offline', reason: 'runner_offline' });
+      }
+
+      return {
+        plan: {
+          ok: true,
+          dryRun: true,
+          serverId: body.serverId,
+          runnerId: server.runnerId,
+          playbookKey: body.playbookKey,
+          action: body.action,
+        },
+      };
+    }
+
     // Check idempotency
     const [existing] = await db.select().from(orders).where(eq(orders.idempotencyKey, body.idempotencyKey)).limit(1);
-    if (existing) return existing;
+    if (existing) {
+      return {
+        order: {
+          id: existing.id,
+          status: existing.status,
+          serverId: existing.serverId,
+          runnerId: existing.runnerId,
+          playbookKey: existing.playbookKey,
+          action: existing.action,
+          createdAt: existing.createdAt,
+        },
+      };
+    }
+
+    const { dryRun, ...orderInput } = body;
 
     const [newOrder] = await db.insert(orders).values({
-      ...body,
+      ...orderInput,
+      runnerId: server.runnerId,
+      payload: orderInput.payload ?? {},
       status: 'QUEUED',
+      updatedAt: now,
     }).returning();
-    
-    return newOrder;
+
+    return {
+      order: {
+        id: newOrder.id,
+        status: newOrder.status,
+        serverId: newOrder.serverId,
+        runnerId: newOrder.runnerId,
+        playbookKey: newOrder.playbookKey,
+        action: newOrder.action,
+        createdAt: newOrder.createdAt,
+      },
+    };
   });
 
   fastify.post('/orders/:id/cancel', async (request: any, reply) => {
