@@ -3,6 +3,7 @@ import { runners, orders, orderLogs } from '../../db/schema.js';
 import { eq, and, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { ReportV1Schema } from '../../contracts/report.v1.js';
+import { ReportV2Schema } from '../../contracts/report.v2.js';
 
 const runnerRoutes: FastifyPluginAsync = async (fastify) => {
   const db = (fastify as any).db;
@@ -133,8 +134,9 @@ const runnerRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = idParamSchema.parse(request.params);
     const runnerId = request.runner.id;
     
+    const reportSchema = z.union([ReportV2Schema, ReportV1Schema]);
     const body = z.object({
-      report: ReportV1Schema,
+      report: reportSchema,
     }).safeParse(request.body);
 
     if (!body.success) {
