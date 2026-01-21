@@ -13,7 +13,7 @@ Pour garantir une installation robuste sur n'importe quel VPS réinstallé, suiv
 3.  **Base de données** :
     *   **Automatique** : Les migrations sont appliquées automatiquement au démarrage du conteneur Docker.
     *   **Manuel** (si nécessaire) : `npm run db:migrate`
-    *   (Optionnel) Seed initial : `SEED=true npm run db:seed`
+    *   (Debug uniquement) Seed ponctuel : `SEED=true npm run db:seed` (les seeds normaux passent par migration, pas par psql)
 4.  **Validation** : Lancez le smoke test pour vérifier que tout le flow fonctionne :
     *   `npm run smoke` (Assurez-vous que le serveur tourne sur le port 3000)
 
@@ -24,7 +24,8 @@ Pour garantir une installation robuste sur n'importe quel VPS réinstallé, suiv
 | **Installation** | `pnpm install` |
 | **Build** | `npm run build` |
 | **Migrations** | `npm run db:migrate` |
-| **Seeding** | `SEED=true npm run db:seed` |
+| **Vérifier migrations** | `npm run db:verify` |
+| **Seeding (debug)** | `SEED=true npm run db:seed` |
 | **Démarrage** | `npm start` |
 | **Smoke Test** | `npm run smoke` |
 
@@ -54,6 +55,15 @@ La relation est possédée par `servers.runnerId`.
 *   **Erreurs Diagnostiques** : En cas de conflit (ex: commande déjà prise), l'API retourne un code `409` avec une raison précise (`order_not_found`, `wrong_runner`, `invalid_status`).
 *   **Middlewares Sécurisés** : Les accès Admin et Runner sont strictement contrôlés et stoppent l'exécution immédiatement en cas d'échec (401).
 *   **Harmonisation** : La route `/servers/:id/attach-runner` accepte indifféremment `PATCH` et `POST`.
+
+## 🗃️ Migrations & Drizzle (politique)
+
+**NE PAS éditer `migrations/meta/_journal.json` à la main.** Ce fichier est géré par `drizzle-kit generate` en dev/CI uniquement.
+
+- `db:migrate` doit fonctionner dans le conteneur de production **sans** `drizzle-kit`.
+- `db:generate` est réservé au **dev/CI** (poste local ou container tools).
+- Utilisez `npm run db:verify` pour vérifier que chaque entrée du journal a un fichier `.sql` correspondant (et inversement).
+- Les seeds passent par migration (ex: `0004_seed_playbooks.sql`). Évitez les seeds “à la main” via `psql` en pipeline (debug uniquement).
 
 ## 🧭 Doctrine & Stratégie
 Ce projet suit une doctrine de **Pure ESM** (ECMAScript Modules) pour garantir la cohérence entre le développement TypeScript, le runtime Node.js et les conteneurs Docker.
@@ -144,7 +154,44 @@ Utilisez les headers :
 
 ## 📝 Contrats de Données
 
-Le format des rapports est centralisé dans `src/contracts/report.v1.ts`. Utilisez le helper `makeReport()` pour garantir la conformité.
+Le format des rapports est centralisé dans `src/contracts/report.v1.ts` et `src/contracts/report.v2.ts`.
+
+- **Versionnement** : `report.version` est la source de vérité (`v1` ou `v2`).
+- **Compatibilité** : le frontend peut parser **v1 + v2** (recommandé), ou **v2 only** si vous forcez l’envoi côté runner.
+
+### Report v2 (contrat stable)
+
+Champs minimaux attendus :
+
+- `version: "v2"`
+- `summary: string`
+- `durationMs: number`
+- `steps: []` (tableau, même vide)
+- `errors: []` (tableau, même vide)
+
+### Exemple réponse `POST /v1/orders`
+
+```json
+{
+  "order": {
+    "id": "uuid",
+    "status": "QUEUED",
+    "serverId": "uuid",
+    "runnerId": "uuid",
+    "playbookKey": "system.test_ping",
+    "action": "run",
+    "createdAt": "2024-01-01T00:00:00.000Z"
+  },
+  "reportContract": {
+    "version": "v2",
+    "compatibleVersions": ["v1", "v2"],
+    "summary": "string",
+    "durationMs": 123,
+    "steps": [],
+    "errors": []
+  }
+}
+```
 
 ## 🔄 Système de Réconciliation
 Un worker interne s'exécute toutes les 30 secondes pour :

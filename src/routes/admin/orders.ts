@@ -22,6 +22,14 @@ const idParamSchema = z.object({
 
 const ordersRoutes: FastifyPluginAsync = async (fastify) => {
   const db = (fastify as any).db;
+  const reportContract = {
+    version: 'v2',
+    compatibleVersions: ['v1', 'v2'],
+    summary: 'string',
+    durationMs: 0,
+    steps: [],
+    errors: [],
+  };
 
   fastify.get('/orders', async () => {
     return await db.select().from(orders);
@@ -102,6 +110,7 @@ const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           action: existing.action,
           createdAt: existing.createdAt,
         },
+        reportContract,
       };
     }
 
@@ -125,6 +134,7 @@ const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         action: newOrder.action,
         createdAt: newOrder.createdAt,
       },
+      reportContract,
     };
   });
 
