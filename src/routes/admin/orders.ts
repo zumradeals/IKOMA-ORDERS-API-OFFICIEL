@@ -39,7 +39,21 @@ const ordersRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = idParamSchema.parse(request.params);
     const [order] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
     if (!order) return reply.code(404).send({ error: 'Order not found' });
-    return order;
+    
+    const report = order.report as any;
+    
+    return {
+      id: order.id,
+      status: order.status,
+      serverId: order.serverId,
+      runnerId: order.runnerId,
+      playbookKey: order.playbookKey,
+      action: order.action,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+      reportContractVersion: report?.version || null,
+      reportSummary: report?.summary || null,
+    };
   });
 
   fastify.post('/orders', async (request, reply) => {

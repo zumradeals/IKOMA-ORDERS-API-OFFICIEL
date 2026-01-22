@@ -144,7 +144,15 @@ Utilisez les headers :
 - `GET /v1/runners`: Liste des runners (inclut désormais `serverId` et `serverName`).
 - `POST /v1/runners`: Créer un runner (retourne le token).
 - `POST /v1/orders`: Créer un ordre.
-- `GET /v1/orders/:id`: Détails d'un ordre.
+- `GET /v1/orders/:id`: Détails d'un ordre (inclut le résumé du rapport et la version du contrat).
+
+### Exemples de requêtes Admin
+
+#### Récupérer les détails d'un ordre
+```bash
+curl -X GET http://localhost:3000/v1/orders/VOTRE_ORDER_ID \
+  -H "x-ikoma-admin-key: VOTRE_CLE_ADMIN"
+```
 
 ### Runner
 - `POST /v1/runner/heartbeat`: Signal de vie du runner.
