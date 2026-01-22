@@ -60,6 +60,16 @@ const ordersRoutes: FastifyPluginAsync = async (fastify) => {
     const body = orderCreateSchema.parse(request.body);
     const now = new Date();
 
+    // Intercept SYSTEM.diagnostics
+    if (body.playbookKey === 'SYSTEM.diagnostics') {
+      return await fastify.inject({
+        method: 'POST',
+        url: '/v1/orders/system.diagnostics',
+        payload: body,
+        headers: request.headers as any
+      }).then(res => JSON.parse(res.body));
+    }
+
     const [server] = await db.select({ runnerId: servers.runnerId })
       .from(servers)
       .where(eq(servers.id, body.serverId))
