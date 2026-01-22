@@ -23,7 +23,7 @@ const diagnosticsRoutes: FastifyPluginAsync = async (fastify) => {
       status: runners.status,
     }).from(runners);
 
-    const runnerList = runnerRows.map((runner) => {
+    const runnerList = runnerRows.map((runner: any) => {
       const isOnline = !!runner.lastHeartbeatAt
         && now.getTime() - runner.lastHeartbeatAt.getTime() <= 60_000;
 
