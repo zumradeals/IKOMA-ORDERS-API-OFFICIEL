@@ -56,27 +56,27 @@ const systemDiagnosticsRoutes: FastifyPluginAsync = async (fastify) => {
     // STEP 3 — db.migrations_state
     const step3Start = Date.now();
     try {
-      // Drizzle migrations table is usually __drizzle_migrations
-      const migrationTableExists = await db.execute(sql`
-        SELECT EXISTS (
-          SELECT FROM information_schema.tables 
-          WHERE table_name = '__drizzle_migrations'
-        );
+      const migrationTable = await db.execute(sql`
+        SELECT to_regclass('public.__drizzle_migrations') AS table_name;
       `);
-      
-      if (migrationTableExists.rows[0].exists) {
+
+      if (!migrationTable.rows[0]?.table_name) {
+        addStep(
+          'db.migrations_state',
+          'SKIPPED',
+          Date.now() - step3Start,
+          'Migration tracking table not found (expected in setups without Drizzle tracking)'
+        );
+      } else {
         const migrations = await db.execute(sql`SELECT * FROM __drizzle_migrations ORDER BY created_at DESC`);
         const totalCount = migrations.rows.length;
         const lastBatch = totalCount > 0 ? migrations.rows[0].hash : 'none';
-        
+
         addStep('db.migrations_state', 'SUCCESS', Date.now() - step3Start);
         artifacts.internal.db = {
           migrationsCount: totalCount,
           lastMigrationHash: lastBatch
         };
-      } else {
-        addStep('db.migrations_state', 'FAILED', Date.now() - step3Start, 'Migration table not found');
-        errors.push({ code: 'DB_MIGRATIONS_MISSING', message: 'Migration table not found', step: 'db.migrations_state' });
       }
     } catch (err: any) {
       addStep('db.migrations_state', 'FAILED', Date.now() - step3Start, err.message);
